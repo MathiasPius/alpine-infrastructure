@@ -1,0 +1,45 @@
+{
+    "builders": [
+      {
+        "vm_name": "alpine-docker.qcow2",
+        "type": "qemu",
+        "accelerator": "kvm",
+        "headless": "true",
+  
+        "iso_checksum_type": "sha256",
+        "iso_checksum": "4122dce1092564aa88415c21702d6cb973a7d29f91658d24316f7f0aac3a6761",
+        "iso_url": "http://dl-cdn.alpinelinux.org/alpine/v3.9/releases/x86_64/alpine-virt-3.9.4-x86_64.iso",
+  
+        "disk_size": 8000,
+        "format": "qcow2",
+  
+        "http_directory": "httpdir",
+        "output_directory": "images",
+  
+        "ssh_username": "root",
+        "ssh_password": "vmpass",
+        "ssh_wait_timeout": "1h",
+        "shutdown_command": "/sbin/poweroff",
+  
+        "boot_wait": "10s",
+        "boot_command": [
+          "root<enter><wait>",
+          "ip link set eth0 up && udhcpc -i eth0 &&<enter>",
+          "wget http://{{ .HTTPIP }}:{{ .HTTPPort }}/setup.sh &&<enter>",
+          "chmod +x setup.sh && ./setup.sh<enter>"
+        ],
+  
+        "qemuargs": [
+          ["-device", "virtio-net,netdev=user.0"],
+          ["-object","rng-random,id=objrng0,filename=/dev/urandom"],
+          ["-device", "virtio-rng-pci,rng=objrng0,id=rng0,bus=pci.0,addr=0x10"]
+        ]
+      }
+    ],
+    "provisioners": [
+      {
+        "type": "shell",
+        "script": "scripts/install-docker.sh"
+      }
+    ]
+  }
