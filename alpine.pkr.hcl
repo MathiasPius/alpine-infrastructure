@@ -19,6 +19,7 @@ source "qemu" "alpine" {
     vm_name = "${ var.hostname }.qcow2"
     accelerator = "kvm"
     headless = false
+    disk_size = "256M"
     iso_checksum_type = local.alpine_version.iso_checksum_type
     iso_checksum = local.alpine_version.iso_checksum
     iso_url = local.alpine_version.iso_url
@@ -48,6 +49,10 @@ build {
   sources = [
     "source.qemu.alpine"
   ]
+
+  provisioner "ansible" {
+    playbook_file = "ansible/users.yml"
+  }
 
   provisioner "ansible" {
     host_alias = var.hostname
