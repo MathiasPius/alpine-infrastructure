@@ -18,9 +18,8 @@ echo "root:vmpass" | chpasswd
 setup-apkrepos http://dl-cdn.alpinelinux.org/alpine/v3.9/main
 
 # Configure OpenSSH to (temporarily) allow user/password connections.
-apk add --quiet openssh python3 haveged
+apk add --quiet openssh python3
 rc-update --quiet add sshd default
-rc-update --quiet add haveged default
 echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
 
 rc-update --quiet add networking boot
