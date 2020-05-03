@@ -7,7 +7,15 @@
         bits: 256
         rounds: 1
         name: "ssh-ed25519,ssh-ed25519-cert-v01@openssh.com"
+    users:
+      mpd:
+        pubkeys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEA3jVZi8PRkO4Qv2H+CeWHbdxr+ujXt9v9gtF0OaZ/1
   tasks:
+    - name: configure hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
     - name: find all existing ssh host keys
       find:
         paths: /etc/ssh/
@@ -65,6 +73,14 @@
       loop_control:
         loop_var: key
 
+    - name: deploy root-ca public certificate
+      copy:
+        dest: /etc/ssh/root-ca.pub
+        src: secrets/root-ca.pub
+        owner: root
+        group: root
+        mode: o=rw,go=r
+
     - name: install new sshd_config file
       copy:
         dest: /etc/ssh/sshd_config
@@ -74,6 +90,9 @@
         content: |
           # cipherli.st
           Protocol 2
+
+          # This is our root CA public key used to sign hosts and user keys
+          TrustedUserCAKeys /etc/ssh/root-ca.pub
           
           {% for key in host_key_algorithms %}
           HostKey /etc/ssh/ssh_host_{{ key.algo }}_key
@@ -100,4 +119,4 @@
           HostKeyAlgorithms {{ host_key_algorithms | map(attribute='name') | join(',') }}
 
           # Need to setup individual users before this can be uncommented
-          # PermitRootLogin no
+          PermitRootLogin no

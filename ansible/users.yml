@@ -1,0 +1,70 @@
+---
+- hosts: all
+  vars:
+    certificate_validity_period: +52w
+    users:
+      mpd:
+        name: Mathias Pius Damm-Pedersen
+        pubkeys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEA3jVZi8PRkO4Qv2H+CeWHbdxr+ujXt9v9gtF0OaZ/1
+  tasks:
+    - name: create temporary directory locally to store public keys for signing
+      delegate_to: localhost
+      tempfile:
+        state: directory
+      register: "certificates"
+
+    - name: create user directories for public keys
+      delegate_to: localhost
+      file:
+        path: "{{ certificates.path }}/{{ item.key }}"
+        state: directory
+      loop: "{{ users | dict2items | list }}"
+
+    - name: write all public keys to files, so they can be signed
+      delegate_to: localhost
+      copy:
+        dest: "{{ certificates.path }}/{{ item.0.key }}/id_{{ (item.1 | hash('sha512'))[:16] }}.pub"
+        content: "{{ item.1 }}"
+      loop: "{{ users | dict2items | subelements('value.pubkeys') | list }}"
+
+    - name: sign all user keys
+      delegate_to: localhost
+      shell: ansible-vault view secrets/root-ca 2>/dev/null | ssh-keygen -s /dev/stdin -I root-ca -n "{{ item.0.key }}" -C '{{ item.0.key }}/id_{{ (item.1 | hash('sha512'))[:16] }}.pub' -V {{ certificate_validity_period }} "{{ certificates.path }}/{{ item.0.key }}/id_{{ (item.1 | hash('sha512'))[:16] }}.pub"
+      loop: "{{ users | dict2items | subelements('value.pubkeys') | list }}"
+
+    - name: create user accounts
+      user:
+        password: "{{ lookup('password', '/dev/null chars=ascii_letters,digits,hexdigits,punctuation length=32 encrypt=sha512_crypt') }}"
+        name: "{{ item.key }}"
+      loop: "{{ users | dict2items }}"
+
+    - name: create /home/$USER/.ssh directory
+      file:
+        path: "/home/{{ item.key }}/.ssh"
+        owner: "{{ item.key }}"
+        group: "{{ item.key }}"
+        mode: o=rwx,go=
+        state: directory
+      loop: "{{ users | dict2items }}"
+
+    - name: deploy public keys
+      copy:
+        dest: "/home/{{ item.key }}/.ssh/authorized_keys"
+        mode: o=rw,g=r,o=r
+        owner: "{{ item.key }}"
+        group: "{{ item.key }}"
+        content: |
+          {% for key in item.value.pubkeys %}
+          {{ key }}
+          {% endfor %}
+      loop: "{{ users | dict2items | list }}"
+
+    - name: deploy certificates
+      copy:
+        src: "{{ certificates.path }}/{{ item.0.key }}/id_{{ (item.1 | hash('sha512'))[:16] }}-cert.pub"
+        dest: "/home/{{ item.0.key }}/.ssh/id_{{ (item.1 | hash('sha512'))[:16] }}-cert.pub"
+        mode: o=rw,g=r,o=r
+        owner: "{{ item.0.key }}"
+        group: "{{ item.0.key }}"
+      loop: "{{ users | dict2items | subelements('value.pubkeys') | list }}"
