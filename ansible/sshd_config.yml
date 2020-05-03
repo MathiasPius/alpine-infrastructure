@@ -1,0 +1,103 @@
+---
+- hosts: all
+  vars:
+    certificate_validity_period: +52w
+    host_key_algorithms:
+      - algo: ed25519
+        bits: 256
+        rounds: 1
+        name: "ssh-ed25519,ssh-ed25519-cert-v01@openssh.com"
+  tasks:
+    - name: find all existing ssh host keys
+      find:
+        paths: /etc/ssh/
+        patterns: ssh_host_*
+      register: old_host_keys
+
+    - name: delete all existing host keys
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_host_keys.files }}"
+
+    - name: generate host keys
+      command: "ssh-keygen -q -t {{ key.algo }} -b {{ key.bits }} -a {{ key.rounds }} -f '/etc/ssh/ssh_host_{{ key.algo }}_key' -N '' -C ''"
+      loop: "{{ host_key_algorithms }}"
+      loop_control:
+        loop_var: key
+
+    - name: update sshd service configuration file
+      copy:
+        dest: /etc/conf.d/sshd
+        owner: root
+        group: root
+        mode: o=rw,go=r
+        content: |
+          sshd_disable_keygen=yes
+
+    - name: create temporary directory locally to store public keys for signing
+      delegate_to: localhost
+      tempfile:
+        state: directory
+      register: "certificates"
+
+    - name: retrieve host keys for signing
+      fetch:
+        src: "/etc/ssh/ssh_host_{{ key.algo }}_key.pub"
+        dest: "{{ certificates.path }}/"
+        flat: true
+      loop: "{{ host_key_algorithms }}"
+      loop_control:
+        loop_var: key
+
+    - name: "sign host keys"
+      delegate_to: localhost
+      shell: "ansible-vault view secrets/root-ca 2>/dev/null | ssh-keygen -s /dev/stdin -I root-ca -h -n {{ inventory_hostname }} -V {{ certificate_validity_period }} {{ certificates.path }}/ssh_host_{{ key.algo }}_key.pub"
+      loop: "{{ host_key_algorithms }}"
+      loop_control:
+        loop_var: key
+
+    - name: deploy certificates
+      copy:
+        dest: "/etc/ssh/ssh_host_{{ key.algo }}_key-cert.pub"
+        src: "{{ certificates.path }}/ssh_host_{{ key.algo }}_key-cert.pub"
+      loop: "{{ host_key_algorithms }}"
+      loop_control:
+        loop_var: key
+
+    - name: install new sshd_config file
+      copy:
+        dest: /etc/ssh/sshd_config
+        owner: root
+        group: root
+        mode: o=rw,go=r
+        content: |
+          # cipherli.st
+          Protocol 2
+          
+          {% for key in host_key_algorithms %}
+          HostKey /etc/ssh/ssh_host_{{ key.algo }}_key
+          HostCertificate /etc/ssh/ssh_host_{{ key.algo }}_key-cert.pub
+          {% endfor %}
+
+          KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+          Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+          MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512,hmac-sha2-256,umac-128@openssh.com
+
+          # Standard Alpine config
+          AuthorizedKeysFile      .ssh/authorized_keys
+          AllowTcpForwarding no
+          GatewayPorts no
+          X11Forwarding no
+          Subsystem       sftp    /usr/lib/ssh/sftp-server
+
+          # Hardening
+          MaxAuthTries 3
+          PermitEmptyPasswords no
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          RekeyLimit 256M
+          HostKeyAlgorithms {{ host_key_algorithms | map(attribute='name') | join(',') }}
+
+          # Need to setup individual users before this can be uncommented
+          # PermitRootLogin no
